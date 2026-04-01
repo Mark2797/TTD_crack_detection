@@ -11,11 +11,12 @@ def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
     total_samples = 0
     
     for X_batch, y_batch in dataloader:
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+        X_batch = torch.as_tensor(X_batch).to(device)
+        y_batch = torch.as_tensor(y_batch).to(device).long()
         
         optimizer.zero_grad()
         output = model(X_batch) 
-        loss = loss_fn(output, y_batch)
+        loss = loss_fn(output.as_subclass(torch.Tensor), y_batch)
         loss.backward()
         optimizer.step()
         
@@ -38,24 +39,25 @@ def val_loop(model, device, dataloader, loss_fn):
     
     with torch.no_grad():
         for X_batch, y_batch in dataloader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            X_batch = torch.as_tensor(X_batch).to(device)
+            y_batch = torch.as_tensor(y_batch).to(device).long()
             output = model(X_batch)
             
             batch_size = X_batch.size(0)
             total_samples += batch_size
             
-            v_loss += loss_fn(output, y_batch).item() * batch_size
+            v_loss += loss_fn(output.as_subclass(torch.Tensor), y_batch).item() * batch_size
             v_iou += iou_crack(output, y_batch).item() * batch_size
             v_f1 += f1_score_crack(output, y_batch).item() * batch_size
 
     return v_loss / total_samples, v_iou / total_samples, v_f1 / total_samples
 
-def run_experiment(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, epochs):
+def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch):
     """
     Main training execution loop.
     """
     model = model.to(device)
-    best_val_loss = float('inf')
+    best_iou = -float('inf')
 
     history = {
         'train_loss': [],
@@ -64,7 +66,7 @@ def run_experiment(model, model_name, device, train_dl, val_dl, loss_fn, optimiz
         'val_f1': []
     }
     
-    for epoch in range(epochs):
+    for epoch in range(num_epoch):
         # Perform training and validation steps
         t_loss = train_loop(model, device, train_dl, loss_fn, optimizer)
         v_loss, v_iou, v_f1 = val_loop(model, device, val_dl, loss_fn)
@@ -74,9 +76,9 @@ def run_experiment(model, model_name, device, train_dl, val_dl, loss_fn, optimiz
         history['val_iou'].append(v_iou)
         history['val_f1'].append(v_f1)
         
-        if v_loss < best_val_loss:
-            best_val_loss = v_loss
-            torch.save(model.state_dict(), f"{model_name}_best_loss.pth")
+        if v_iou > best_iou:
+            best_iou = v_iou
+            torch.save(model.state_dict(), f"{model_name}.pth")
             checkpoint_status = " [Saved Best Model]"
         else:
             checkpoint_status = ""

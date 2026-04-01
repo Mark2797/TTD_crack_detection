@@ -15,10 +15,10 @@ def _get_stats(inp, targ, class_idx=1, smooth=1e-6):
     """
     # Convert logits to class indices by picking the channel with the highest value
     # Resulting shape: (N, H, W)
-    pred = inp.argmax(dim=1)
+    pred = inp.argmax(dim=1).as_subclass(torch.Tensor)
     
     # Remove channel dimension from target to match prediction shape (N, H, W)
-    targ = targ.squeeze(1)
+    targ = targ.as_subclass(torch.Tensor).squeeze(1)
     
     # Calculate True Positives: Predicted crack AND is actually a crack
     tp = ((pred == class_idx) & (targ == class_idx)).sum().float()

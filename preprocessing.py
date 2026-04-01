@@ -144,7 +144,7 @@ class TunnelDataPipeline:
         )
         
         # num_workers=0 is used to prevent multiprocessing issues in some Windows/Conda environments
-        dls = dblock.dataloaders(train_val_df, bs=bs, num_workers=0, pin_memory=True)
+        dls = dblock.dataloaders(train_val_df, bs=bs, num_workers=0, pin_memory=False)
         
         # Optionally generate a separate test loader for final evaluation
         test_dl = None

@@ -1,3 +1,4 @@
 [submodule "TACK_Tunnel_Data"]
 	path = TACK_Tunnel_Data
 	url = https://huggingface.co/datasets/dwa5/TACK_Tunnel_Data
+	ignore = untracked
