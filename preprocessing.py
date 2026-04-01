@@ -6,7 +6,7 @@ from PIL import Image
 from fastai.vision.all import *
 
 class TunnelDataPipeline:
-    def __init__(self, base_dir, original_mask_dir, output_root):
+    def __init__(self, base_dir, original_mask_dir):
         """
         Initialize the pipeline and establish the directory structure.
         """
@@ -56,7 +56,7 @@ class TunnelDataPipeline:
             try:
                 # Construct absolute image path
                 clean_filename = row['filename'].split('../')[-1]
-                abs_img_path = os.path.normpath(os.path.join(self.base_dir, "TACK_Tunnel_Data", clean_filename))
+                abs_img_path = os.path.normpath(os.path.join(self.base_dir, clean_filename))
                 img_name = os.path.splitext(os.path.basename(abs_img_path))[0]
                 
                 # Derive mask name: TA_001_A -> TA_001_fuse_A_1band.png
@@ -153,14 +153,12 @@ if __name__ == "__main__":
     
     csv_source_dir = os.path.join(dataset_folder, "2_model_input")
     raw_mask_dir = os.path.join(dataset_folder, "3_mask")
-    output_root = os.path.join(base_dir, "preprocessing_outputs")
 
     # 2. Initialize the Pipeline
     # The class will automatically create 'sanitized_masks' in your project root
     pipeline = TunnelDataPipeline(
-        base_dir=base_dir,
-        original_mask_dir=raw_mask_dir,
-        output_root=output_root
+        base_dir=dataset_folder,
+        original_mask_dir=raw_mask_dir
     )
 
     # 3. Load Dataset CSVs
