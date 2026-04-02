@@ -1,5 +1,8 @@
+import os
+import sys
+from tqdm.auto import tqdm
 import torch
-from matrices import iou_crack, f1_score_crack
+from matrices import *
 import matplotlib.pyplot as plt
 
 def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
@@ -29,12 +32,13 @@ def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
         
     return running_loss / total_samples
 
-def val_loop(model, device, dataloader, loss_fn):
+def val_loop(model, device, dataloader, loss_fn, is_test=False):
     """
     Executes a validation pass and returns metrics.
     """
     model.eval()
     v_loss, v_iou, v_f1 = 0.0, 0.0, 0.0
+    v_recall, v_prec = 0.0, 0.0
     total_samples = 0
     
     with torch.no_grad():
@@ -50,12 +54,27 @@ def val_loop(model, device, dataloader, loss_fn):
             v_iou += iou_crack(output, y_batch).item() * batch_size
             v_f1 += f1_score_crack(output, y_batch).item() * batch_size
 
-    return v_loss / total_samples, v_iou / total_samples, v_f1 / total_samples
+            if is_test:
+                v_recall += recall_crack(output, y_batch).item() * batch_size
+                v_prec += precision_crack(output, y_batch).item() * batch_size
+    
+    avg_loss = v_loss / total_samples
+    avg_iou = v_iou / total_samples
+    avg_f1 = v_f1 / total_samples
+    
+    if is_test:
+        avg_recall = v_recall / total_samples
+        avg_prec = v_prec / total_samples
+        return avg_loss, avg_iou, avg_f1, avg_recall, avg_prec
+        
+    return avg_loss, avg_iou, avg_f1
 
-def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch):
+def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch, save_dir="models"):
     """
     Main training execution loop.
     """
+    os.makedirs(save_dir, exist_ok=True)
+
     model = model.to(device)
     best_iou = -float('inf')
 
@@ -65,8 +84,10 @@ def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_
         'val_iou': [],
         'val_f1': []
     }
+
+    pbar = tqdm(range(num_epoch), desc=f"  → {model_name}", leave=False, file=sys.__stdout__)
     
-    for epoch in range(num_epoch):
+    for epoch in pbar:
         # Perform training and validation steps
         t_loss = train_loop(model, device, train_dl, loss_fn, optimizer)
         v_loss, v_iou, v_f1 = val_loop(model, device, val_dl, loss_fn)
@@ -75,10 +96,13 @@ def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_
         history['val_loss'].append(v_loss)
         history['val_iou'].append(v_iou)
         history['val_f1'].append(v_f1)
+
+        pbar.set_postfix({"IoU": f"{v_iou:.4f}", "F1": f"{v_f1:.4f}"})
         
         if v_iou > best_iou:
             best_iou = v_iou
-            torch.save(model.state_dict(), f"{model_name}.pth")
+            save_path = os.path.join(save_dir, f"{model_name}.pth")
+            torch.save(model.state_dict(), save_path)
             checkpoint_status = " [Saved Best Model]"
         else:
             checkpoint_status = ""
@@ -119,3 +143,46 @@ def plot_training_history(history):
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.show()
+
+def save_training_history(history, model_name, save_dir="figures"):
+    """
+    Saves the training and validation progress as PNG files.
+    Graph 1: Training Loss vs. Validation Loss.
+    Graph 2: Validation IoU vs. Validation F1 Score.
+    """
+    # Ensure the directory for figures exists 
+    os.makedirs(save_dir, exist_ok=True)
+    
+    epochs = range(len(history['train_loss']))
+
+    # --- Plot 1: Loss History ---
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, history['train_loss'], label="Train Loss", color='blue')
+    plt.plot(epochs, history['val_loss'], label="Val Loss", color='orange')
+    plt.title(f"Loss History: {model_name}")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.6)
+    
+    # Save the Loss plot [cite: 298]
+    loss_path = os.path.join(save_dir, f"{model_name}_loss.png")
+    plt.savefig(loss_path)
+    plt.close() # Close to free up memory during loops
+
+    # --- Plot 2: Performance Metrics (IoU & F1) ---
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, history['val_f1'], label="Val F1 Score", color='green')
+    plt.plot(epochs, history['val_iou'], label="Val IoU", color='red')
+    plt.title(f"Performance Metrics: {model_name}")
+    plt.xlabel("Epoch")
+    plt.ylabel("Score (0.0 - 1.0)")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.6)
+    
+    # Save the Metrics plot [cite: 298]
+    metrics_path = os.path.join(save_dir, f"{model_name}_metrics.png")
+    plt.savefig(metrics_path)
+    plt.close()
+    
+    print(f"Charts saved to {save_dir}/")
