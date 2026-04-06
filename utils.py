@@ -186,3 +186,41 @@ def save_training_history(history, model_name, save_dir="figures"):
     plt.close()
     
     print(f"Charts saved to {save_dir}/")
+
+def visualize_first_prediction(model, dataloader, device):
+    """
+    Loads a trained model and displays the first image's ground truth vs prediction.
+    Enhanced to ensure binary masks (0 and 1) are visible.
+    """
+    model.to(device)
+    model.eval()
+
+    # Get first batch
+    images, masks = next(iter(dataloader))
+    
+    images = images.to(device)
+    with torch.no_grad():
+        output = model(images)
+        # argmax results in values 0 and 1
+        preds = torch.argmax(output, dim=1)
+
+    # Prepare data for plotting
+    # Squeeze out extra dimensions
+    true_mask = masks[0].cpu().squeeze().numpy() * 255
+    pred_mask = preds[0].cpu().squeeze().numpy() * 255
+
+    # Visualization with improved visibility
+    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # Using a vibrant colormap like 'magma' or 'jet' makes 1s stand out against 0s
+    ax[0].imshow(true_mask, cmap='magma') 
+    ax[0].set_title("Ground Truth Label (0-1 Range)")
+    ax[0].axis('off')
+    
+    # Alternatively, you can multiply by 255 if you prefer standard grayscale
+    ax[1].imshow(pred_mask, cmap='gray')
+    ax[1].set_title("Model Prediction (Scaled to 255)")
+    ax[1].axis('off')
+    
+    plt.tight_layout()
+    plt.show()
