@@ -6,6 +6,7 @@ import numpy as np
 from matrices import *
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from fastai.vision.all import imagenet_stats
 
 def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
     """
@@ -189,125 +190,123 @@ def save_training_history(history, model_name, save_dir="figures"):
     
     print(f"Charts saved to {save_dir}/")
 
-def show_prediction_overlap(model, dataloader, device):
+def show_prediction_overlap(model, dataloader, device, custom_stats=None):
     """
-    Displays a 3-panel comparison: Ground Truth, Model Prediction, and a 
-    color-coded Overlap image for error analysis.
+    Displays 3x4 grid. Fixes RuntimeError by ensuring stats are on CPU 
+    for denormalization.
     """
-    # Set model to evaluation mode and move to the specified device
+    model.to(device)
+    model.eval()
+    
+    stats = custom_stats if custom_stats else imagenet_stats
+    # Explicitly set device="cpu" to match img.cpu()
+    mean = torch.tensor(stats[0], device="cpu").view(3, 1, 1)
+    std = torch.tensor(stats[1], device="cpu").view(3, 1, 1)
+
+    found_samples = []
+    for images, masks in dataloader:
+        for i in range(len(masks)):
+            if masks[i].sum() > 0:
+                found_samples.append((images[i], masks[i]))
+            if len(found_samples) == 3: break
+        if len(found_samples) == 3: break
+
+    if len(found_samples) < 3:
+        print(f"Only found {len(found_samples)} samples with defects.")
+        return
+
+    fig, axes = plt.subplots(3, 4, figsize=(22, 18))
+    
+    for idx, (img, mask) in enumerate(found_samples):
+        # Now both img.cpu() and stats are on CPU
+        img_vis = (img.cpu() * std + mean).permute(1, 2, 0).numpy()
+        img_vis = np.clip(img_vis, 0, 1)
+
+        img_input = img.unsqueeze(0).to(device)
+        with torch.no_grad():
+            output = model(img_input)
+            pred = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()
+        
+        targ = mask.squeeze().cpu().numpy()
+        overlap = np.zeros((targ.shape[0], targ.shape[1], 3))
+        overlap[(pred == 1) & (targ == 1)] = [0, 1, 0] # TP
+        overlap[(pred == 0) & (targ == 1)] = [1, 0, 0] # FN
+        overlap[(pred == 1) & (targ == 0)] = [1, 1, 0] # FP
+
+        axes[idx, 0].imshow(img_vis)
+        axes[idx, 1].imshow(targ * 255, cmap='gray')
+        axes[idx, 2].imshow(pred * 255, cmap='gray')
+        axes[idx, 3].imshow(overlap)
+        for ax in axes[idx]: ax.axis('off')
+
+    patches = [
+        mpatches.Patch(color='green', label='Correct (TP)'),
+        mpatches.Patch(color='red', label='Missed (FN)'),
+        mpatches.Patch(color='yellow', label='False Alarm (FP)')
+    ]
+    fig.legend(handles=patches, loc='upper left', bbox_to_anchor=(1.01, 0.95), fontsize=12)
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.9)
+    plt.show()
+
+def save_prediction_overlap(model, model_name, dataloader, device, custom_stats=None, save_dir="figures"):
+    """
+    Saves 3x4 grid. Fixes device mismatch error by placing stats on CPU.
+    """
+    os.makedirs(save_dir, exist_ok=True)
     model.to(device)
     model.eval()
 
-    # Retrieve the first batch of images and sanitized masks from the pipeline
-    images, masks = next(iter(dataloader))
-    images = images.to(device)
-    
-    with torch.no_grad():
-        # Perform inference and get class indices (0 for background, 1 for crack)
-        output = model(images)
-        preds = torch.argmax(output, dim=1) 
+    stats = custom_stats if custom_stats else imagenet_stats
+    # Force stats to CPU to avoid conflict with default CUDA device
+    mean = torch.tensor(stats[0], device="cpu").view(3, 1, 1)
+    std = torch.tensor(stats[1], device="cpu").view(3, 1, 1)
 
-    # Extract the first sample and convert to NumPy for plotting
-    targ = masks[0].cpu().squeeze().numpy()
-    pred = preds[0].cpu().squeeze().numpy()
+    found_samples = []
+    for images, masks in dataloader:
+        for i in range(len(masks)):
+            if masks[i].sum() > 0:
+                found_samples.append((images[i], masks[i]))
+            if len(found_samples) == 3: break
+        if len(found_samples) == 3: break
 
-    # Create an empty RGB image for the overlap visualization
-    overlap = np.zeros((targ.shape[0], targ.shape[1], 3))
-    
-    # Logic for error categories based on binary mask values (0 and 1):
-    # Green: Correct Prediction (True Positive)
-    overlap[(pred == 1) & (targ == 1)] = [0, 1, 0] 
-    # Red: Missed Crack (False Negative)
-    overlap[(pred == 0) & (targ == 1)] = [1, 0, 0] 
-    # Yellow: False Alarm (False Positive)
-    overlap[(pred == 1) & (targ == 0)] = [1, 1, 0]
+    if not found_samples:
+        print("No defect samples found to save.")
+        return
 
-    # Initialize the plot with three subplots
-    fig, ax = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(3, 4, figsize=(22, 18))
     
-    # Scale binary masks (0-1) to grayscale range (0-255) for visibility
-    ax[0].imshow(targ * 255, cmap='gray')
-    ax[0].set_title("Ground Truth Label")
-    
-    ax[1].imshow(pred * 255, cmap='gray')
-    ax[1].set_title("Model Prediction")
-    
-    # Show the RGB overlap image
-    ax[2].imshow(overlap)
-    ax[2].set_title("Error Analysis (Overlap)")
+    for idx, (img, mask) in enumerate(found_samples):
+        # Calculation now happens entirely on CPU
+        img_vis = (img.cpu() * std + mean).permute(1, 2, 0).numpy()
+        img_vis = np.clip(img_vis, 0, 1)
 
-    # Clean up the visual by removing axes from all subplots
-    for a in ax: a.axis('off')
+        img_input = img.unsqueeze(0).to(device)
+        with torch.no_grad():
+            output = model(img_input)
+            pred = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()
+        
+        targ = mask.squeeze().cpu().numpy()
+        overlap = np.zeros((targ.shape[0], targ.shape[1], 3))
+        overlap[(pred == 1) & (targ == 1)] = [0, 1, 0] 
+        overlap[(pred == 0) & (targ == 1)] = [1, 0, 0] 
+        overlap[(pred == 1) & (targ == 0)] = [1, 1, 0]
 
-    # Create custom legend patches for the error analysis
-    green_patch = mpatches.Patch(color='green', label='Correct (TP)')
-    red_patch = mpatches.Patch(color='red', label='Missed (FN)')
-    yellow_patch = mpatches.Patch(color='yellow', label='False Alarm (FP)')
-    
-    # Anchor the legend to the right of the overlap plot to avoid overlap
-    ax[2].legend(handles=[green_patch, red_patch, yellow_patch], 
-                 loc='upper left', bbox_to_anchor=(1.05, 1))
+        axes[idx, 0].imshow(img_vis)
+        axes[idx, 1].imshow(targ * 255, cmap='gray')
+        axes[idx, 2].imshow(pred * 255, cmap='gray')
+        axes[idx, 3].imshow(overlap)
+        for ax in axes[idx]: ax.axis('off')
+
+    patches = [
+        mpatches.Patch(color='green', label='Correct (TP)'),
+        mpatches.Patch(color='red', label='Missed (FN)'),
+        mpatches.Patch(color='yellow', label='False Alarm (FP)')
+    ]
+    fig.legend(handles=patches, loc='upper left', bbox_to_anchor=(1.01, 0.95))
     
     plt.tight_layout()
-    plt.show() # Display the figure in the notebook
-
-def save_prediction_overlap(model, model_name, dataloader, device, save_dir="figures"):
-    """
-    Generates and saves the 3-panel visualization to disk without 
-    displaying it in the notebook.
-    """
-    # Ensure the target directory exists
-    os.makedirs(save_dir, exist_ok=True) 
-    
-    model.to(device)
-    model.eval()
-
-    # Extract the first batch and run prediction
-    images, masks = next(iter(dataloader))
-    images = images.to(device)
-    with torch.no_grad():
-        output = model(images)
-        preds = torch.argmax(output, dim=1) 
-
-    # Prepare data for error analysis
-    targ = masks[0].cpu().squeeze().numpy()
-    pred = preds[0].cpu().squeeze().numpy()
-
-    # Construct the RGB overlap visualization
-    overlap = np.zeros((targ.shape[0], targ.shape[1], 3))
-    overlap[(pred == 1) & (targ == 1)] = [0, 1, 0] # Correct (TP)
-    overlap[(pred == 0) & (targ == 1)] = [1, 0, 0] # Missed (FN)
-    overlap[(pred == 1) & (targ == 0)] = [1, 1, 0] # False Alarm (FP)
-
-    # Create the figure for saving
-    fig, ax = plt.subplots(1, 3, figsize=(18, 6))
-    
-    # Use 255 scaling for the binary grayscale masks
-    ax[0].imshow(targ * 255, cmap='gray')
-    ax[0].set_title("Ground Truth Label")
-    ax[1].imshow(pred * 255, cmap='gray')
-    ax[1].set_title("Model Prediction")
-    ax[2].imshow(overlap)
-    ax[2].set_title("Error Analysis (Overlap)")
-
-    for a in ax: a.axis('off')
-
-    # Add the legend with a tight anchor to the plot
-    green_patch = mpatches.Patch(color='green', label='Correct (TP)')
-    red_patch = mpatches.Patch(color='red', label='Missed (FN)')
-    yellow_patch = mpatches.Patch(color='yellow', label='False Alarm (FP)')
-    ax[2].legend(handles=[green_patch, red_patch, yellow_patch], 
-                 loc='upper left', bbox_to_anchor=(1.05, 1))
-    
-    plt.tight_layout()
-    
-    # Define the save path using the experiment/model name
-    visualization_path = os.path.join(save_dir, f"{model_name}_visualization.png")
-    
-    # bbox_inches='tight' is critical here to ensure the legend isn't cropped
-    plt.savefig(visualization_path, bbox_inches='tight')
-    
-    # Close the figure to free memory and prevent it from showing in the notebook
-    plt.close(fig) 
-    
-    print(f"Visualization saved to {visualization_path}")
+    save_path = os.path.join(save_dir, f"{model_name}_visualization.png")
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Visualization saved to {save_path}")
