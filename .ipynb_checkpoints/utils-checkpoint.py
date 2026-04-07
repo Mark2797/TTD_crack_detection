@@ -8,6 +8,25 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from fastai.vision.all import imagenet_stats
 
+class EarlyStopping:
+    def __init__(self, patience, delta=0):
+        self.patience = patience
+        self.delta = delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+
 def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
     """
     Executes a single training epoch.
@@ -25,13 +44,23 @@ def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
         loss = loss_fn(output.as_subclass(torch.Tensor), y_batch)
         loss.backward()
         optimizer.step()
+
+        # PER-BATCH STEP: Only if it's OneCycle
+        # reference: https://medium.com/@heyamit10/pytorch-segmentation-models-a-practical-guide-5bf973a32e30
+        if scheduler and isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR):
+            scheduler.step()
         
         batch_size = X_batch.size(0)
         running_loss += loss.item() * batch_size
         total_samples += batch_size
         
-    if scheduler:
-        scheduler.step()
+    # PER-EPOCH STEP: For everything else (Cosine, Step, etc.)
+    # We do this OUTSIDE the for-loop, after all batches are done
+    if scheduler and not isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR):
+        # Safety: Plateau needs the validation loss, so it actually 
+        # usually stays in the 'epochs' function. But for Cosine, it's fine here.
+        if not isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step()
         
     return running_loss / total_samples
 
@@ -72,11 +101,13 @@ def val_loop(model, device, dataloader, loss_fn, is_test=False):
         
     return avg_loss, avg_iou, avg_f1
 
-def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch, save_dir="models"):
+def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch, scheduler=None, patience=15, save_dir="models"):
     """
     Main training execution loop.
     """
     os.makedirs(save_dir, exist_ok=True)
+
+    early_stopper = EarlyStopping(patience=patience)
 
     model = model.to(device)
     best_iou = -float('inf')
@@ -92,7 +123,7 @@ def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_
     
     for epoch in pbar:
         # Perform training and validation steps
-        t_loss = train_loop(model, device, train_dl, loss_fn, optimizer)
+        t_loss = train_loop(model, device, train_dl, loss_fn, optimizer, scheduler)
         v_loss, v_iou, v_f1 = val_loop(model, device, val_dl, loss_fn)
 
         history['train_loss'].append(t_loss)
@@ -113,6 +144,11 @@ def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_
         print(f"Epoch {epoch}: "
               f"T-Loss: {t_loss:.4f} | V-Loss: {v_loss:.4f} | "
               f"IoU: {v_iou:.4f} | F1: {v_f1:.4f}{checkpoint_status}")
+
+        early_stopper(v_loss)
+        if early_stopper.early_stop:
+            print(f"\nEarly stopping triggered at epoch {epoch}. Stopping training.")
+            break
               
     return history
 
