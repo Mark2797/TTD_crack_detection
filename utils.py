@@ -101,13 +101,16 @@ def val_loop(model, device, dataloader, loss_fn, is_test=False):
         
     return avg_loss, avg_iou, avg_f1
 
-def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch, scheduler=None, patience=15, save_dir="models"):
+def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_epoch, scheduler=None, patience=None, save_dir="models"):
     """
     Main training execution loop.
     """
     os.makedirs(save_dir, exist_ok=True)
 
-    early_stopper = EarlyStopping(patience=patience)
+    if patience is None:
+        early_stopper = EarlyStopping(patience=(num_epoch//10))
+    else:
+        early_stopper = EarlyStopping(patience=patience)
 
     model = model.to(device)
     best_iou = -float('inf')
