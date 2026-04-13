@@ -26,6 +26,14 @@ class EarlyStopping:
         else:
             self.best_loss = val_loss
             self.counter = 0
+    
+    def get_info(self):
+        """Return early stopping info for logging."""
+        return {
+            'best_loss': self.best_loss,
+            'counter': self.counter,
+            'patience': self.patience
+        }
 
 def train_loop(model, device, dataloader, loss_fn, optimizer, scheduler=None):
     """
@@ -150,7 +158,13 @@ def epochs(model, model_name, device, train_dl, val_dl, loss_fn, optimizer, num_
 
         early_stopper(v_loss)
         if early_stopper.early_stop:
-            print(f"\nEarly stopping triggered at epoch {epoch}. Stopping training.")
+            info = early_stopper.get_info()
+            print(f"\n{'='*60}")
+            print(f"Early Stopping Triggered at Epoch {epoch}")
+            print(f"  - Best Validation Loss: {info['best_loss']:.4f}")
+            print(f"  - Patience Exhausted: {info['counter']}/{info['patience']} epochs without improvement")
+            print(f"  - Stopping training now.")
+            print(f"{'='*60}")
             break
               
     return history
@@ -349,3 +363,161 @@ def save_prediction_overlap(model, model_name, dataloader, device, custom_stats=
     plt.savefig(save_path, bbox_inches='tight')
     plt.close(fig)
     print(f"Visualization saved to {save_path}")
+
+
+def _score_single_prediction(output, mask):
+    """
+    Compute per-sample segmentation metrics for one image-mask pair.
+    """
+    if mask.dim() == 3:
+        mask = mask.unsqueeze(0)
+
+    return {
+        "iou": iou_crack(output, mask).item(),
+        "f1": f1_score_crack(output, mask).item(),
+        "recall": recall_crack(output, mask).item(),
+        "precision": precision_crack(output, mask).item(),
+    }
+
+
+def save_worst_prediction_overlap(
+    model,
+    model_name,
+    dataloader,
+    device,
+    custom_stats=None,
+    save_dir="figures",
+    top_k=3,
+    ranking_metric="iou",
+    defects_only=True,
+    sample_records=None,
+):
+    """
+    Save the worst-performing samples from a dataloader based on per-sample IoU/F1.
+
+    This is useful for qualitative error analysis because it surfaces genuinely hard
+    examples instead of just taking the first few positive masks in the dataloader.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    model.to(device)
+    model.eval()
+
+    stats = custom_stats if custom_stats else imagenet_stats
+    mean = torch.tensor(stats[0], device="cpu").view(3, 1, 1)
+    std = torch.tensor(stats[1], device="cpu").view(3, 1, 1)
+
+    ranking_metric = ranking_metric.lower()
+    valid_metrics = {"iou", "f1", "recall", "precision"}
+    if ranking_metric not in valid_metrics:
+        raise ValueError(f"ranking_metric must be one of {sorted(valid_metrics)}")
+
+    scored_samples = []
+
+    sample_counter = 0
+
+    with torch.no_grad():
+        for images, masks in dataloader:
+            for i in range(len(masks)):
+                img = images[i]
+                mask = masks[i]
+
+                if defects_only and mask.sum() <= 0:
+                    continue
+
+                img_input = img.unsqueeze(0).to(device)
+                mask_input = mask.unsqueeze(0).to(device).long()
+                output = model(img_input)
+                pred = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()
+                targ = mask.squeeze().cpu().numpy()
+                scores = _score_single_prediction(output, mask_input)
+
+                record = None
+                if sample_records is not None and sample_counter < len(sample_records):
+                    record = sample_records.iloc[sample_counter]
+
+                scored_samples.append({
+                    "img": img.detach().cpu(),
+                    "mask": mask.detach().cpu(),
+                    "pred": pred,
+                    "target": targ,
+                    "scores": scores,
+                    "sample_index": sample_counter,
+                    "image_path": None if record is None else record.get("image_abs_path", None),
+                })
+                sample_counter += 1
+
+    if not scored_samples:
+        print("No eligible samples found for worst-case visualization.")
+        return
+
+    worst_samples = sorted(scored_samples, key=lambda x: x["scores"][ranking_metric])[:top_k]
+    num_rows = len(worst_samples)
+    fig, axes = plt.subplots(num_rows, 4, figsize=(22, 6 * num_rows))
+
+    if num_rows == 1:
+        axes = np.expand_dims(axes, axis=0)
+
+    column_titles = ["Input Image", "Ground Truth", "Prediction", "Overlap"]
+    for col_idx, title in enumerate(column_titles):
+        axes[0, col_idx].set_title(title, fontsize=14)
+
+    fig.suptitle(f"Worst-Case Visualization: {model_name}", fontsize=18, y=0.995)
+
+    for idx, sample in enumerate(worst_samples):
+        img_vis = (sample["img"] * std + mean).permute(1, 2, 0).numpy()
+        img_vis = np.clip(img_vis, 0, 1)
+
+        pred = sample["pred"]
+        targ = sample["target"]
+        overlap = np.zeros((targ.shape[0], targ.shape[1], 3))
+        overlap[(pred == 1) & (targ == 1)] = [0, 1, 0]
+        overlap[(pred == 0) & (targ == 1)] = [1, 0, 0]
+        overlap[(pred == 1) & (targ == 0)] = [1, 1, 0]
+
+        axes[idx, 0].imshow(img_vis)
+        axes[idx, 1].imshow(targ * 255, cmap='gray')
+        axes[idx, 2].imshow(pred * 255, cmap='gray')
+        axes[idx, 3].imshow(overlap)
+
+        for ax in axes[idx]:
+            ax.axis('off')
+
+        score_text = " | ".join(
+            f"{name.upper()}={value:.3f}" for name, value in sample["scores"].items()
+        )
+        axes[idx, 0].set_ylabel(f"Worst sample {idx + 1}", fontsize=13, rotation=90)
+        axes[idx, 3].text(
+            0.99,
+            -0.10,
+            score_text,
+            transform=axes[idx, 3].transAxes,
+            ha='right',
+            va='top',
+            fontsize=11,
+        )
+        if sample["image_path"]:
+            image_name = os.path.basename(sample["image_path"])
+        else:
+            image_name = "unknown"
+        axes[idx, 0].text(
+            0.01,
+            -0.08,
+            f"index={sample['sample_index']} | file={image_name}",
+            transform=axes[idx, 0].transAxes,
+            ha='left',
+            va='top',
+            fontsize=10,
+        )
+
+    patches = [
+        mpatches.Patch(color='green', label='Correct (TP)'),
+        mpatches.Patch(color='red', label='Missed (FN)'),
+        mpatches.Patch(color='yellow', label='False Alarm (FP)')
+    ]
+    fig.legend(handles=patches, loc='upper left', bbox_to_anchor=(1.01, 0.95))
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.975])
+    save_path = os.path.join(save_dir, f"{model_name}_worst_{ranking_metric}.png")
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Worst-case visualization saved to {save_path}")

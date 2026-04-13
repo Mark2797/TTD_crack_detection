@@ -1,2 +1,6 @@
 TACK_Tunnel_Data/
 *.pth
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.png
