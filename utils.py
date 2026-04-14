@@ -317,7 +317,10 @@ def save_prediction_overlap(model, model_name, dataloader, device, custom_stats=
     
     for idx, (img, mask) in enumerate(found_samples):
         # Calculation now happens entirely on CPU
-        img_vis = (img.cpu() * std + mean).permute(1, 2, 0).numpy()
+        # img_vis = (img.cpu() * std + mean).permute(1, 2, 0).numpy()
+        # img_vis = np.clip(img_vis, 0, 1)
+        img_vis = img.cpu()[0] * std[0] + mean[0]
+        img_vis = img_vis.numpy()
         img_vis = np.clip(img_vis, 0, 1)
 
         img_input = img.unsqueeze(0).to(device)
@@ -331,7 +334,8 @@ def save_prediction_overlap(model, model_name, dataloader, device, custom_stats=
         overlap[(pred == 0) & (targ == 1)] = [1, 0, 0] 
         overlap[(pred == 1) & (targ == 0)] = [1, 1, 0]
 
-        axes[idx, 0].imshow(img_vis)
+        # axes[idx, 0].imshow(img_vis)
+        axes[idx, 0].imshow(img_vis, cmap='gray')
         axes[idx, 1].imshow(targ * 255, cmap='gray')
         axes[idx, 2].imshow(pred * 255, cmap='gray')
         axes[idx, 3].imshow(overlap)
