@@ -128,11 +128,11 @@ def plot_nmf_elbow(model, dataloader, target_layer, device, k_range=range(2, 16)
     
     plt.show()
 
-
-def find_situations_and_run_dff(model, dataloader, target_layer, device, save_dir="figures/dff_analysis", custom_stats=None, n_components=6):
+def find_situations_and_run_dff(model, model_name, dataloader, target_layer, device, save_dir="figures/dff_analysis", custom_stats=None, n_components=6):
     """
     Scans the dataloader for TP, FP, FN, TN situations, runs DFF, 
     and plots them dynamically based on k (Row 1: 4 standard, Row 2: k//2 concepts, Row 3: remainder).
+    Includes the model_name in the saved file output.
     """
     os.makedirs(save_dir, exist_ok=True)
     model.to(device)
@@ -140,13 +140,12 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
     
     stats = custom_stats if custom_stats else imagenet_stats
     
-    # Fix UserWarning: Avoid double-wrapping tensors by using as_tensor and clone
     mean = torch.as_tensor(stats[0], device="cpu").clone().detach().view(3, 1, 1)
     std = torch.as_tensor(stats[1], device="cpu").clone().detach().view(3, 1, 1)
 
     found_situations = {"TP": None, "FP": None, "FN": None, "TN": None}
     
-    print(f"Scanning dataloader for edge cases (TP, FP, FN, TN) for k={n_components}...")
+    print(f"Scanning dataloader for edge cases (TP, FP, FN, TN) for {model_name} (k={n_components})...")
     with torch.no_grad():
         for images, masks in dataloader:
             images = images.to(device)
@@ -161,7 +160,6 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
                 mask_has_crack = mask.sum() > 0
                 pred_has_crack = pred.sum() > 0
                 
-                # Capture the first instance of each critical edge case
                 if mask_has_crack and pred_has_crack and found_situations["TP"] is None:
                     found_situations["TP"] = (img, mask, pred)
                 elif not mask_has_crack and pred_has_crack and found_situations["FP"] is None:
@@ -171,23 +169,19 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
                 elif not mask_has_crack and not pred_has_crack and found_situations["TN"] is None:
                     found_situations["TN"] = (img, mask, pred)
             
-            # Break early if all 4 situations are successfully found
             if all(v is not None for v in found_situations.values()):
                 break
 
-    # Ensure k is at least 2 for basic functionality
     n_components = max(2, n_components)
     dff = DeepFeatureFactorization(model=model, target_layer=target_layer)
     
-    # Calculate the number of images per row for the DFF concepts
     r1_cols = max(1, n_components // 2)
     r2_cols = n_components - r1_cols
     
-    # Calculate total GridSpec width to ensure perfect centering for any number of columns
     gs_width = 4 * r1_cols * r2_cols
-    w0 = gs_width // 4         # Width of each image in the first row
-    w1 = gs_width // r1_cols   # Width of each image in the second row
-    w2 = gs_width // r2_cols   # Width of each image in the third row
+    w0 = gs_width // 4         
+    w1 = gs_width // r1_cols   
+    w2 = gs_width // r2_cols   
     
     for sit_name, data in found_situations.items():
         if data is None:
@@ -198,25 +192,20 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
         mask = mask.numpy()
         pred = pred.numpy()
         
-        # Run DFF factorization
         heatmaps = dff.factorize(img_tensor, n_components=n_components)
         
-        # Denormalize image for visualization
         img_cpu = img_tensor.squeeze(0).cpu()
         img_vis = (img_cpu * std + mean).permute(1, 2, 0).numpy()
         img_vis = np.clip(img_vis, 0, 1)
         
-        # Generate Overlap map
         overlap = np.zeros((mask.shape[0], mask.shape[1], 3))
-        overlap[(pred == 1) & (mask == 1)] = [0, 1, 0] # TP (Green)
-        overlap[(pred == 0) & (mask == 1)] = [1, 0, 0] # FN (Red)
-        overlap[(pred == 1) & (mask == 0)] = [1, 1, 0] # FP (Yellow)
+        overlap[(pred == 1) & (mask == 1)] = [0, 1, 0] 
+        overlap[(pred == 0) & (mask == 1)] = [1, 0, 0] 
+        overlap[(pred == 1) & (mask == 0)] = [1, 1, 0] 
         
-        # --- Dynamic Centered Layout System ---
         fig = plt.figure(figsize=(18, 14))
         gs = fig.add_gridspec(3, gs_width) 
         
-        # Row 1: Always the 4 standard base views
         ax_img = fig.add_subplot(gs[0, 0*w0 : 1*w0])
         ax_mask = fig.add_subplot(gs[0, 1*w0 : 2*w0])
         ax_pred = fig.add_subplot(gs[0, 2*w0 : 3*w0])
@@ -238,11 +227,9 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
         ax_over.set_title("Prediction Overlap", fontsize=14)
         ax_over.axis('off')
         
-        # Row 2: First half of DFF concepts (k // 2)
         for i in range(r1_cols):
             ax = fig.add_subplot(gs[1, i*w1 : (i+1)*w1])
             heatmap = heatmaps[i]
-            # Min-Max normalize heatmap for display clarity
             heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
             
             ax.imshow(img_vis)
@@ -250,7 +237,6 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
             ax.set_title(f"DFF Concept {i+1}", fontsize=14)
             ax.axis('off')
             
-        # Row 3: Remaining DFF concepts
         for i in range(r2_cols):
             ax = fig.add_subplot(gs[2, i*w2 : (i+1)*w2])
             heatmap_idx = r1_cols + i
@@ -262,7 +248,6 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
             ax.set_title(f"DFF Concept {heatmap_idx+1}", fontsize=14)
             ax.axis('off')
 
-        # Legend labels
         patches = [
             mpatches.Patch(color='green', label='Correct (TP)'),
             mpatches.Patch(color='red', label='Missed (FN)'),
@@ -273,12 +258,12 @@ def find_situations_and_run_dff(model, dataloader, target_layer, device, save_di
         plt.tight_layout()
         plt.subplots_adjust(bottom=0.1) 
         
-        save_path = os.path.join(save_dir, f"DFF_Analysis_{sit_name}.png")
+        # ---> CHANGED HERE: Added model_name to the file string <---
+        save_path = os.path.join(save_dir, f"{model_name}_DFF_Analysis_{sit_name}.png")
         plt.savefig(save_path, bbox_inches='tight')
         plt.close(fig)
         print(f"Saved {sit_name} visual to {save_path}")
 
-        # Force memory cleanup to prevent OOM (Out of Memory) when generating many charts
         del heatmaps, img_vis, overlap, fig
         gc.collect() 
 
