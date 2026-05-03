@@ -163,6 +163,7 @@ def build_model(arch: str, encoder_name: str, encoder_weights: str | None, class
         "manet": smp.MAnet,
         "deeplabv3": smp.DeepLabV3,
         "deeplabv3plus": smp.DeepLabV3Plus,
+        "segformer": smp.Segformer,
     }
     arch_key = arch.lower()
     if arch_key not in arch_map:

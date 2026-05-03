@@ -1,0 +1,41 @@
+# Generated bridge config for TTD crack fine-tuning with official SAM3
+# Fill or adjust the dataset adapter section after checking the exact official config schema.
+paths:
+  bpe_path: /users/7/yu001011/checkpoints/sam3/bpe.model
+  dataset_root: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/finetune_data/ttd_crack/Single-TB
+  experiment_log_dir: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/outputs/finetune_runs/Single-TB
+  sam3_checkpoint: /users/7/yu001011/checkpoints/sam3/model.pt
+launcher:
+  num_nodes: 1
+  gpus_per_node: 1
+  experiment_log_dir: ${paths.experiment_log_dir}
+submitit:
+  use_cluster: false
+  timeout_hour: 24
+  cpus_per_task: 4
+  partition: null
+  account: null
+  qos: null
+dataset:
+  name: ttd_crack
+  prompt_text: crack
+  train_manifest: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/finetune_data/ttd_crack/Single-TB/train/train_manifest.csv
+  val_manifest: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/finetune_data/ttd_crack/Single-TB/val/val_manifest.csv
+  test_manifest: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/finetune_data/ttd_crack/Single-TB/test/test_manifest.csv
+  images_subdir: train/images
+  masks_subdir: train/masks
+model:
+  pretrained_checkpoint: ${paths.sam3_checkpoint}
+  prompt_mode: text_only
+  prompt_text: crack
+training:
+  batch_size: 1
+  num_workers: 4
+  max_epochs: 20
+  lr: 1e-5
+  weight_decay: 1e-4
+  grad_accum_steps: 1
+notes:
+  - Replace the dataset section with the exact adapter fields expected by your chosen official base config.
+  - Inspect one working official YAML under sam3/train/configs and port TTD paths into that schema.
+  - If text-only training is unstable, switch to box or mask prompts once your adapter supports them.
