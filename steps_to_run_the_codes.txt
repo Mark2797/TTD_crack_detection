@@ -1,0 +1,15 @@
+STEPS:
+------ common steps -------
+1. download the original dataset (exactly the same as the original pipeline, run dataset_download.py)
+2. run preprocessing.py (exactly the same as the originl pipeline) to get tne masks
+
+----- specific for HPF and DFF ---------
+3. run prefiltering.py under the project directory, so it will generate and save the original images in channel 1, the filtered features in channels 2 and 3. 
+The resultant folders will be "./TACK_Tunnel_Data/4_img_sobelxy" and "./TACK_Tunnel_Data/4_img_sobelmaglap". Note here to do this you want to install OpenCV by pip install opencv-python.
+4. now step into the folder "dff_HPF_multi_model", download all the models we want to do feature extraction to "./models" directory, and run the notebook "dff_hpf_multi_model.ipynb".
+
+
+FILE UPDATED:
+preprocessing_wi_filter.py (new file) --- the same as the original preprocessing.py but the dataloader has taken High pass filer into consideration
+utils.py --- only updated the function save_prediction_overlap, instead of using 3 channel to show the original figure we just use channel 1
+dff_multi_model.py --- only updated the function find_consensus_and_run_dff, instead of using 3 channel to show the original figure we just use channel 1
