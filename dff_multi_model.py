@@ -222,7 +222,11 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
             heatmaps = dff.factorize(img_tensor.to(device), n_components=n_components)
             
             img_cpu = img_tensor.squeeze(0).cpu()
-            img_vis = (img_cpu * std + mean).permute(1, 2, 0).numpy()
+            # img_vis = (img_cpu * std + mean).permute(1, 2, 0).numpy()
+            # img_vis = np.clip(img_vis, 0, 1)
+            
+            img_vis = img_cpu[0] * std[0, 0, 0] + mean[0, 0, 0]
+            img_vis = img_vis.numpy()
             img_vis = np.clip(img_vis, 0, 1)
             
             overlap = np.zeros((mask_np.shape[0], mask_np.shape[1], 3))
@@ -238,7 +242,8 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
             ax_pred = fig.add_subplot(gs[0, 2*w0 : 3*w0])
             ax_over = fig.add_subplot(gs[0, 3*w0 : 4*w0])
             
-            ax_img.imshow(img_vis)
+            # ax_img.imshow(img_vis)
+            ax_img.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
             ax_img.set_title(f"[{sit_name}] Original Image", fontsize=14)
             ax_img.axis('off')
             
@@ -259,7 +264,10 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
                 heatmap = heatmaps[i]
                 heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
                 
-                ax.imshow(img_vis)
+                #ax.imshow(img_vis)
+                #ax.imshow(heatmap, cmap='jet', alpha=0.5)
+                
+                ax.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
                 ax.imshow(heatmap, cmap='jet', alpha=0.5)
                 ax.set_title(f"DFF Concept {i+1}", fontsize=14)
                 ax.axis('off')
@@ -270,8 +278,12 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
                 heatmap = heatmaps[heatmap_idx]
                 heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
                 
-                ax.imshow(img_vis)
+                #ax.imshow(img_vis)
+                #ax.imshow(heatmap, cmap='jet', alpha=0.5)
+                
+                ax.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
                 ax.imshow(heatmap, cmap='jet', alpha=0.5)
+                
                 ax.set_title(f"DFF Concept {heatmap_idx+1}", fontsize=14)
                 ax.axis('off')
 
