@@ -132,8 +132,10 @@ def plot_nmf_elbow(model, dataloader, target_layer, device, k_range=range(2, 16)
 def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model, target_layers, device, save_dir="figures/dff_analysis", custom_stats_list=None, n_components=6):
     """
     Independently scans a list of dataloaders for each model to find its own first TP, FP, FN, TN situations.
-    If a situation is not found in the first dataloader, it continues searching in the subsequent dataloaders.
-    Then, generates the standard individual DFF layouts for each model.
+    Generates a 4-row layout:
+      - Row 1: Channel 0, Channel 1, Channel 2
+      - Row 2: GT Mask, Prediction, Overlap
+      - Row 3 & 4: DFF Concepts overlaid EXCLUSIVELY on Channel 0
     """
     os.makedirs(save_dir, exist_ok=True)
     num_models = len(models)
@@ -148,15 +150,15 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
     r1_cols = max(1, n_components // 2)
     r2_cols = n_components - r1_cols
     
-    gs_width = 4 * r1_cols * r2_cols
-    w0 = gs_width // 4         
+    # Calculate GridSpec width to center 3 top columns with the dynamic DFF rows below
+    gs_width = 3 * r1_cols * r2_cols
+    w_top = gs_width // 3      # Width for elements in the top two 3-column rows
     w1 = gs_width // r1_cols   
     w2 = gs_width // r2_cols   
     
-    # Process each model completely independently
     for m_idx, model in enumerate(models):
         model_name = model_names[m_idx]
-        model_dataloaders = dataloaders_list_per_model[m_idx] # This is now a list of dataloaders
+        model_dataloaders = dataloaders_list_per_model[m_idx] 
         target_layer = target_layers[m_idx]
         stats = custom_stats_list[m_idx]
         
@@ -170,10 +172,10 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
         
         print(f"\n--- Processing {model_name} (k={n_components}) ---")
         
-        # --- PHASE 1: Find the first fitting image across the provided dataloaders ---
+        # --- PHASE 1: Find situations across dataloaders ---
         for dl_idx, dataloader in enumerate(model_dataloaders):
             if all(v is not None for v in found_situations.values()):
-                break # All situations found, stop searching dataloaders
+                break 
                 
             print(f"Scanning dataloader {dl_idx + 1}/{len(model_dataloaders)}...")
             with torch.no_grad():
@@ -200,15 +202,15 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
                             found_situations["TN"] = (img, mask, pred)
                     
                     if all(v is not None for v in found_situations.values()):
-                        break # Break batch loop
+                        break
 
-        # --- PHASE 2: Generate DFF Layouts for this model ---
+        # --- PHASE 2: Generate DFF Layouts ---
         print(f"Generating DFF plots for {model_name}...")
         dff = DeepFeatureFactorization(model=model, target_layer=target_layer)
         
         for sit_name, data in found_situations.items():
             if data is None:
-                print(f"  -> Warning: Could not find situation [{sit_name}] for {model_name} in ANY provided dataloader.")
+                print(f"  -> Warning: Could not find situation [{sit_name}] for {model_name}.")
                 continue
                 
             img_tensor, mask, pred = data
@@ -219,27 +221,41 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
             
             img_cpu = img_tensor.squeeze(0).cpu()
             
-            # Using your updated grayscale visualization logic
-            img_vis = img_cpu[0] * std[0, 0, 0] + mean[0, 0, 0]
-            img_vis = img_vis.numpy()
-            img_vis = np.clip(img_vis, 0, 1)
+            # --- SEPARATE AND DENORMALIZE THE 3 CHANNELS INDEPENDENTLY ---
+            ch0_vis = np.clip((img_cpu[0] * std[0, 0, 0] + mean[0, 0, 0]).numpy(), 0, 1)
+            ch1_vis = np.clip((img_cpu[1] * std[1, 0, 0] + mean[1, 0, 0]).numpy(), 0, 1)
+            ch2_vis = np.clip((img_cpu[2] * std[2, 0, 0] + mean[2, 0, 0]).numpy(), 0, 1)
             
             overlap = np.zeros((mask_np.shape[0], mask_np.shape[1], 3))
             overlap[(pred_np == 1) & (mask_np == 1)] = [0, 1, 0] 
             overlap[(pred_np == 0) & (mask_np == 1)] = [1, 0, 0] 
             overlap[(pred_np == 1) & (mask_np == 0)] = [1, 1, 0] 
             
-            fig = plt.figure(figsize=(18, 14))
-            gs = fig.add_gridspec(3, gs_width) 
+            # Increased height slightly to comfortably fit the 4th row
+            fig = plt.figure(figsize=(18, 18))
+            gs = fig.add_gridspec(4, gs_width) 
             
-            ax_img = fig.add_subplot(gs[0, 0*w0 : 1*w0])
-            ax_mask = fig.add_subplot(gs[0, 1*w0 : 2*w0])
-            ax_pred = fig.add_subplot(gs[0, 2*w0 : 3*w0])
-            ax_over = fig.add_subplot(gs[0, 3*w0 : 4*w0])
+            # --- Row 1: The 3 Channels ---
+            ax_ch0 = fig.add_subplot(gs[0, 0*w_top : 1*w_top])
+            ax_ch1 = fig.add_subplot(gs[0, 1*w_top : 2*w_top])
+            ax_ch2 = fig.add_subplot(gs[0, 2*w_top : 3*w_top])
             
-            ax_img.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
-            ax_img.set_title(f"[{sit_name}] Original Image", fontsize=14)
-            ax_img.axis('off')
+            ax_ch0.imshow(ch0_vis, cmap='gray', vmin=0, vmax=1)
+            ax_ch0.set_title(f"[{sit_name}] Channel 0", fontsize=14)
+            ax_ch0.axis('off')
+
+            ax_ch1.imshow(ch1_vis, cmap='gray', vmin=0, vmax=1)
+            ax_ch1.set_title(f"[{sit_name}] Channel 1", fontsize=14)
+            ax_ch1.axis('off')
+
+            ax_ch2.imshow(ch2_vis, cmap='gray', vmin=0, vmax=1)
+            ax_ch2.set_title(f"[{sit_name}] Channel 2", fontsize=14)
+            ax_ch2.axis('off')
+            
+            # --- Row 2: Mask, Pred, Overlap ---
+            ax_mask = fig.add_subplot(gs[1, 0*w_top : 1*w_top])
+            ax_pred = fig.add_subplot(gs[1, 1*w_top : 2*w_top])
+            ax_over = fig.add_subplot(gs[1, 2*w_top : 3*w_top])
             
             ax_mask.imshow(mask_np * 255, cmap='gray')
             ax_mask.set_title("Ground Truth Mask", fontsize=14)
@@ -253,23 +269,24 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
             ax_over.set_title("Prediction Overlap", fontsize=14)
             ax_over.axis('off')
             
+            # --- Row 3 & 4: DFF Concepts overlaid ONLY on Channel 0 ---
             for i in range(r1_cols):
-                ax = fig.add_subplot(gs[1, i*w1 : (i+1)*w1])
+                ax = fig.add_subplot(gs[2, i*w1 : (i+1)*w1])
                 heatmap = heatmaps[i]
                 heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
                 
-                ax.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
+                ax.imshow(ch0_vis, cmap='gray', vmin=0, vmax=1) # Background is strict Ch0
                 ax.imshow(heatmap, cmap='jet', alpha=0.5)
                 ax.set_title(f"DFF Concept {i+1}", fontsize=14)
                 ax.axis('off')
                 
             for i in range(r2_cols):
-                ax = fig.add_subplot(gs[2, i*w2 : (i+1)*w2])
+                ax = fig.add_subplot(gs[3, i*w2 : (i+1)*w2])
                 heatmap_idx = r1_cols + i
                 heatmap = heatmaps[heatmap_idx]
                 heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
                 
-                ax.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
+                ax.imshow(ch0_vis, cmap='gray', vmin=0, vmax=1) # Background is strict Ch0
                 ax.imshow(heatmap, cmap='jet', alpha=0.5)
                 ax.set_title(f"DFF Concept {heatmap_idx+1}", fontsize=14)
                 ax.axis('off')
@@ -282,13 +299,13 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
             fig.legend(handles=patches, loc='lower center', ncol=3, bbox_to_anchor=(0.5, 0.05), fontsize=14)
 
             plt.tight_layout()
-            plt.subplots_adjust(bottom=0.1) 
+            plt.subplots_adjust(bottom=0.08) 
             
             save_path = os.path.join(save_dir, f"{model_name}_DFF_Analysis_{sit_name}.png")
             plt.savefig(save_path, bbox_inches='tight')
             plt.close(fig)
 
-            del heatmaps, img_vis, overlap, fig
+            del heatmaps, ch0_vis, ch1_vis, ch2_vis, overlap, fig
             gc.collect() 
 
         dff.remove_hook()
