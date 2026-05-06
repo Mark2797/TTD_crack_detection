@@ -68,13 +68,58 @@ def make_sobel_mag_lap_3ch_image(img_path):
     return img_3ch
 
 
+def make_sobel_mag_gabor_3ch_image(
+    img_path,
+    ksize=31,
+    sigma=4,
+    lambd=10,
+    gamma=0.5,
+    psi=0,
+):
+    """
+    3-channel output:
+        channel 1 = original grayscale
+        channel 2 = Sobel magnitude
+        channel 3 = max |Gabor response| over orientations
+    """
+    gray = np.array(Image.open(img_path).convert('L')).astype(np.float32)
+
+    sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    sobel_mag = np.sqrt(sobel_x**2 + sobel_y**2)
+
+    responses = []
+    for theta in np.arange(0, np.pi, np.pi / 4):
+        kernel = cv2.getGaborKernel(
+            (ksize, ksize),
+            sigma,
+            theta,
+            lambd,
+            gamma,
+            psi,
+            ktype=cv2.CV_32F,
+        )
+        response = cv2.filter2D(gray, cv2.CV_32F, kernel)
+        responses.append(np.abs(response))
+
+    gabor_max = np.max(np.stack(responses, axis=0), axis=0)
+
+    ch1 = gray.astype(np.uint8)
+    ch2 = normalize_to_uint8(sobel_mag)
+    ch3 = normalize_to_uint8(gabor_max)
+
+    img_3ch = np.stack([ch1, ch2, ch3], axis=-1)
+    return img_3ch
+
+
 def process_folder(input_folder, output_folder, mode="sobelxy"):
     """
     Read all images in input_folder, process them, and save to output_folder.
 
     mode:
-        "sobelxy"     -> save as originalname_sobelxy.ext
-        "sobelmaglap" -> save as originalname_sobelmaglap.ext
+        "sobelxy"         -> save as originalname_sobelxy.ext
+        "sobelmaglap"     -> save as originalname_sobelmaglap.ext
+        "sobelmag_gabor"  -> save as originalname_sobelmag_gabor.ext
     """
     os.makedirs(output_folder, exist_ok=True)
 
@@ -96,6 +141,9 @@ def process_folder(input_folder, output_folder, mode="sobelxy"):
             elif mode == "sobelmaglap":
                 img_3ch = make_sobel_mag_lap_3ch_image(input_path)
                 output_name = f"{base}_sobelmaglap{ext}"
+            elif mode == "sobelmag_gabor":
+                img_3ch = make_sobel_mag_gabor_3ch_image(input_path)
+                output_name = f"{base}_sobelmag_gabor{ext}"
             else:
                 raise ValueError(f"Unknown mode: {mode}")
 
@@ -115,6 +163,7 @@ if __name__ == "__main__":
 
     output_folder_sobelxy = os.path.join(dataset_folder, "4_img_sobelxy")
     output_folder_sobelmaglap = os.path.join(dataset_folder, "4_img_sobelmaglap")
+    output_folder_sobelmag_gabor = os.path.join(dataset_folder, "4_img_sobelmag_gabor")
 #%% Save the Sobel-x Sobel-y in the additional two channels
     print("Processing Sobel-x / Sobel-y version...")
     process_folder(
@@ -129,6 +178,14 @@ if __name__ == "__main__":
         input_folder=input_folder,
         output_folder=output_folder_sobelmaglap,
         mode="sobelmaglap"
+    )
+
+#%% Save the Sobel magnitude and Gabor max response in the additional two channels
+    print("Processing Sobel magnitude / Gabor max-response version...")
+    process_folder(
+        input_folder=input_folder,
+        output_folder=output_folder_sobelmag_gabor,
+        mode="sobelmag_gabor"
     )
 
     print("All done.")
