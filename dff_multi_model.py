@@ -128,67 +128,22 @@ def plot_nmf_elbow(model, dataloader, target_layer, device, k_range=range(2, 16)
     
     plt.show()
 
-def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, device, save_dir="figures/dff_analysis", custom_stats_list=None, n_components=6):
+
+def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model, target_layers, device, save_dir="figures/dff_analysis", custom_stats_list=None, n_components=6):
     """
-    Scans multiple dataloaders to find the EXACT same images where all models 
-    yield the same classification (TP, FP, FN, TN). Then, generates the standard 
-    individual DFF layouts for each model using those consensus images.
+    Independently scans a list of dataloaders for each model to find its own first TP, FP, FN, TN situations.
+    If a situation is not found in the first dataloader, it continues searching in the subsequent dataloaders.
+    Then, generates the standard individual DFF layouts for each model.
     """
     os.makedirs(save_dir, exist_ok=True)
     num_models = len(models)
     
-    for model in models:
-        model.to(device)
-        model.eval()
-        
     # Handle normalization stats: fallback to imagenet if list is missing or contains None
     if custom_stats_list is None:
         custom_stats_list = [imagenet_stats] * num_models
     else:
-        # Replace any individual None values inside the list with imagenet_stats
         custom_stats_list = [s if s is not None else imagenet_stats for s in custom_stats_list]
 
-    found_situations = {"TP": None, "FP": None, "FN": None, "TN": None}
-    
-    print(f"Scanning dataloaders to find consensus edge cases across {num_models} models...")
-    
-    # --- PHASE 1: Find Consensus Images ---
-    with torch.no_grad():
-        for batches in zip(*dataloaders):
-            masks = batches[0][1] # Ground truth mask (identical across dataloaders)
-            
-            # Gather predictions from all models for this batch
-            preds_list = []
-            for m_idx, model in enumerate(models):
-                images = batches[m_idx][0].to(device)
-                outputs = model(images)
-                preds_list.append(torch.argmax(outputs, dim=1).cpu())
-                
-            for i in range(len(masks)):
-                mask = masks[i].squeeze().cpu()
-                mask_has_crack = mask.sum() > 0
-                
-                # Check predictions across all models for this specific image
-                preds_for_i = [preds[i].squeeze() for preds in preds_list]
-                preds_have_crack = [p.sum() > 0 for p in preds_for_i]
-                
-                all_predict_crack = all(preds_have_crack)
-                all_predict_no_crack = not any(preds_have_crack)
-                
-                # Store the image tensors, the shared mask, and the respective predictions
-                if mask_has_crack and all_predict_crack and found_situations["TP"] is None:
-                    found_situations["TP"] = {"imgs": [b[0][i].unsqueeze(0) for b in batches], "mask": mask, "preds": preds_for_i}
-                elif not mask_has_crack and all_predict_crack and found_situations["FP"] is None:
-                    found_situations["FP"] = {"imgs": [b[0][i].unsqueeze(0) for b in batches], "mask": mask, "preds": preds_for_i}
-                elif mask_has_crack and all_predict_no_crack and found_situations["FN"] is None:
-                    found_situations["FN"] = {"imgs": [b[0][i].unsqueeze(0) for b in batches], "mask": mask, "preds": preds_for_i}
-                elif not mask_has_crack and all_predict_no_crack and found_situations["TN"] is None:
-                    found_situations["TN"] = {"imgs": [b[0][i].unsqueeze(0) for b in batches], "mask": mask, "preds": preds_for_i}
-            
-            if all(v is not None for v in found_situations.values()):
-                break
-
-    # --- PHASE 2: Generate DFF Layouts for Each Model ---
     n_components = max(2, n_components)
     r1_cols = max(1, n_components // 2)
     r2_cols = n_components - r1_cols
@@ -198,33 +153,73 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
     w1 = gs_width // r1_cols   
     w2 = gs_width // r2_cols   
     
+    # Process each model completely independently
     for m_idx, model in enumerate(models):
         model_name = model_names[m_idx]
+        model_dataloaders = dataloaders_list_per_model[m_idx] # This is now a list of dataloaders
         target_layer = target_layers[m_idx]
         stats = custom_stats_list[m_idx]
         
+        model.to(device)
+        model.eval()
+        
         mean = torch.as_tensor(stats[0], device="cpu").clone().detach().view(3, 1, 1)
         std = torch.as_tensor(stats[1], device="cpu").clone().detach().view(3, 1, 1)
+
+        found_situations = {"TP": None, "FP": None, "FN": None, "TN": None}
         
+        print(f"\n--- Processing {model_name} (k={n_components}) ---")
+        
+        # --- PHASE 1: Find the first fitting image across the provided dataloaders ---
+        for dl_idx, dataloader in enumerate(model_dataloaders):
+            if all(v is not None for v in found_situations.values()):
+                break # All situations found, stop searching dataloaders
+                
+            print(f"Scanning dataloader {dl_idx + 1}/{len(model_dataloaders)}...")
+            with torch.no_grad():
+                for images, masks in dataloader:
+                    images = images.to(device)
+                    outputs = model(images)
+                    preds = torch.argmax(outputs, dim=1)
+                    
+                    for i in range(len(masks)):
+                        img = images[i].unsqueeze(0)
+                        mask = masks[i].squeeze().cpu()
+                        pred = preds[i].squeeze().cpu()
+                        
+                        mask_has_crack = mask.sum() > 0
+                        pred_has_crack = pred.sum() > 0
+                        
+                        if mask_has_crack and pred_has_crack and found_situations["TP"] is None:
+                            found_situations["TP"] = (img, mask, pred)
+                        elif not mask_has_crack and pred_has_crack and found_situations["FP"] is None:
+                            found_situations["FP"] = (img, mask, pred)
+                        elif mask_has_crack and not pred_has_crack and found_situations["FN"] is None:
+                            found_situations["FN"] = (img, mask, pred)
+                        elif not mask_has_crack and not pred_has_crack and found_situations["TN"] is None:
+                            found_situations["TN"] = (img, mask, pred)
+                    
+                    if all(v is not None for v in found_situations.values()):
+                        break # Break batch loop
+
+        # --- PHASE 2: Generate DFF Layouts for this model ---
         print(f"Generating DFF plots for {model_name}...")
         dff = DeepFeatureFactorization(model=model, target_layer=target_layer)
         
         for sit_name, data in found_situations.items():
             if data is None:
-                if m_idx == 0: # Only print warning once
-                    print(f"  -> Could not find a consensus image for [{sit_name}].")
+                print(f"  -> Warning: Could not find situation [{sit_name}] for {model_name} in ANY provided dataloader.")
                 continue
                 
-            img_tensor = data["imgs"][m_idx]
-            mask_np = data["mask"].numpy()
-            pred_np = data["preds"][m_idx].numpy()
+            img_tensor, mask, pred = data
+            mask_np = mask.numpy()
+            pred_np = pred.numpy()
             
             heatmaps = dff.factorize(img_tensor.to(device), n_components=n_components)
             
             img_cpu = img_tensor.squeeze(0).cpu()
-            # img_vis = (img_cpu * std + mean).permute(1, 2, 0).numpy()
-            # img_vis = np.clip(img_vis, 0, 1)
             
+            # Using your updated grayscale visualization logic
             img_vis = img_cpu[0] * std[0, 0, 0] + mean[0, 0, 0]
             img_vis = img_vis.numpy()
             img_vis = np.clip(img_vis, 0, 1)
@@ -242,7 +237,6 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
             ax_pred = fig.add_subplot(gs[0, 2*w0 : 3*w0])
             ax_over = fig.add_subplot(gs[0, 3*w0 : 4*w0])
             
-            # ax_img.imshow(img_vis)
             ax_img.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
             ax_img.set_title(f"[{sit_name}] Original Image", fontsize=14)
             ax_img.axis('off')
@@ -264,9 +258,6 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
                 heatmap = heatmaps[i]
                 heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
                 
-                #ax.imshow(img_vis)
-                #ax.imshow(heatmap, cmap='jet', alpha=0.5)
-                
                 ax.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
                 ax.imshow(heatmap, cmap='jet', alpha=0.5)
                 ax.set_title(f"DFF Concept {i+1}", fontsize=14)
@@ -278,12 +269,8 @@ def find_consensus_and_run_dff(models, model_names, dataloaders, target_layers, 
                 heatmap = heatmaps[heatmap_idx]
                 heatmap = (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min() + 1e-8)
                 
-                #ax.imshow(img_vis)
-                #ax.imshow(heatmap, cmap='jet', alpha=0.5)
-                
                 ax.imshow(img_vis, cmap='gray', vmin=0, vmax=1)
                 ax.imshow(heatmap, cmap='jet', alpha=0.5)
-                
                 ax.set_title(f"DFF Concept {heatmap_idx+1}", fontsize=14)
                 ax.axis('off')
 
