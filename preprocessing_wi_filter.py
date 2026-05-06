@@ -62,6 +62,8 @@ class TunnelDataPipeline:
                     processed_img_name = f"{img_name}_sobelxy.png"
                 elif os.path.basename(self.processed_img_dir) == "4_img_sobelmaglap":
                     processed_img_name = f"{img_name}_sobelmaglap.png"
+                elif os.path.basename(self.processed_img_dir) == "4_img_sobelmag_gabor":
+                    processed_img_name = f"{img_name}_sobelmag_gabor.png"
                 else:
                     raise ValueError(f"Unknown processed image folder: {self.processed_img_dir}")
 
@@ -158,6 +160,7 @@ if __name__ == "__main__":
     # choose one:
     processed_version = "4_img_sobelxy"
     # processed_version = "4_img_sobelmaglap"
+    # processed_version = "4_img_sobelmag_gabor"
 
     pipeline = TunnelDataPipeline(
         base_dir=dataset_folder,
