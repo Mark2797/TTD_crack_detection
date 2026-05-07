@@ -1,0 +1,49 @@
+# @package _global_
+defaults:
+  - ttd_single_tb_5shot_textseg
+  - _self_
+
+paths:
+  experiment_log_dir: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/outputs/fewshot_runs/Single-TB/5_shot_per_class
+
+trainer:
+  mode: val
+  data:
+    val:
+      _target_: sam3.train.data.torch_dataset.TorchDataset
+      dataset:
+        _target_: sam3.train.data.sam3_image_dataset.Sam3ImageDataset
+        load_segmentation: ${scratch.enable_segmentation}
+        coco_json_loader:
+          _target_: sam3.train.data.coco_json_loaders.COCO_FROM_JSON
+          include_negatives: true
+          category_chunk_size: 1
+          _partial_: true
+        img_folder: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/fewshot_data/Single-TB/5_shot_per_class/test/images
+        ann_file: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/fewshot_data/Single-TB/5_shot_per_class/test/_annotations.coco.json
+        transforms: ${ttd_train.val_transforms}
+        max_ann_per_img: 100000
+        multiplier: 1
+        training: false
+      shuffle: false
+      batch_size: ${scratch.val_batch_size}
+      num_workers: ${scratch.num_val_workers}
+      pin_memory: true
+      drop_last: false
+      collate_fn: ${scratch.collate_fn_val}
+  meters:
+    val:
+      ttd:
+        segmentation:
+          _target_: sam3.eval.coco_writer.PredictionDumper
+          iou_type: "segm"
+          dump_dir: ${launcher.experiment_log_dir}/dumps/ttd/test
+          merge_predictions: true
+          postprocessor: ${scratch.original_mask_postprocessor}
+          gather_pred_via_filesys: ${scratch.gather_pred_via_filesys}
+          maxdets: 100
+          pred_file_evaluators:
+            - _target_: sam3.eval.coco_eval_offline.CocoEvaluatorOfflineWithPredFileEvaluators
+              gt_path: /users/7/yu001011/csci5527/CSCI5527-final/SAM3/fewshot_data/Single-TB/5_shot_per_class/test/_annotations.coco.json
+              tide: false
+              iou_type: "segm"

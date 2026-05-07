@@ -28,7 +28,7 @@ import torch
 from scipy import ndimage
 
 
-PROJECT_ROOT = Path("/users/7/yu001011/csci5527/CSCI5527-final")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = PROJECT_ROOT / "baseline_models_scripts"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))

@@ -1,55 +1,132 @@
 # SAM3 TTD Crack Segmentation Workspace
 
-這個資料夾是用來跑 TACK Tunnel Data (TTD) crack segmentation 的 SAM3 實驗。現在主要有兩條線：
+## TL;DR: Reproduce the SAM3 Results
 
-- zero-shot: 不訓練 SAM3，直接用 prompt 做預測。
-- few-shot fine-tuning: 用 5 / 10 / 25 / 50 shot 的資料微調 SAM3，再做 test evaluation 和 IoU 分析。
+Before running the commands, go to the SAM3 Hugging Face repo and request checkpoint access:
 
-## 路徑總覽
+- https://huggingface.co/facebook/sam3
+
+After access is approved, authenticate with Hugging Face and clone the official SAM3 repo next to this `CSCI5527-final` repo:
+
+```bash
+# 1. Start from the cloned course project repo.
+cd CSCI5527-final
+
+# 2. Clone the official SAM3 repo as a sibling of CSCI5527-final.
+cd ..
+git clone https://github.com/facebookresearch/sam3.git sam3
+
+# 3. Log in to Hugging Face so SAM3 can download the gated checkpoints.
+#    Create an access token at https://huggingface.co/settings/tokens first.
+python -m pip install -U "huggingface_hub[cli]"
+hf auth login
+
+# 4. Install SAM3. Use the CUDA/PyTorch command that matches your machine if needed.
+cd sam3
+pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+pip install -e ".[train,dev,notebooks]"
+
+# 5. Apply this project's SAM3 source-code patch to the cloned SAM3 repo.
+git apply ../CSCI5527-final/SAM3/reproducibility/sam3_patches/sam3_ttd_changes.patch
+
+# 6. Copy the project-specific SAM3 YAML configs into the cloned SAM3 repo.
+mkdir -p sam3/train/configs/ttd_fewshot
+cp ../CSCI5527-final/SAM3/reproducibility/sam3_configs/ttd_fewshot/*.yaml \
+   sam3/train/configs/ttd_fewshot/
+```
+
+Then run the notebooks in this order:
+
+```text
+CSCI5527-final/SAM3/sam3_ttd_zero_shot.ipynb
+CSCI5527-final/SAM3/sam3_ttd_fewshot_setup.ipynb
+CSCI5527-final/SAM3/sam3_ttd_fewshot_metric_conversion.ipynb
+```
+
+The final report-ready comparison table is:
+
+```text
+CSCI5527-final/SAM3/results/sam3_vs_unet_pixel_metric_comparison.csv
+```
+
+Notes:
+
+- The `sam3/` directory is the separately cloned SAM3 repo after applying our patch. It is not committed inside this course project repo.
+- The notebooks use relative path detection. If the external SAM3 repo is not at `<workspace>/sam3`, set `SAM3_REPO_ROOT`.
+- Large generated outputs, checkpoints, prepared few-shot data, and per-image diagnostic CSVs are intentionally not tracked by git.
+- SAM3 outputs COCO-style instance predictions, so the metric conversion notebook converts them to dense binary masks before comparing against U-Net pixel-level IoU/F1.
+
+This directory contains the SAM3 experiments for crack segmentation on the TACK Tunnel Data (TTD) dataset. The experiments cover two settings:
+
+- **SAM3 zero-shot**: run SAM3 directly with text prompts, without fine-tuning.
+- **SAM3 few-shot fine-tuning**: fine-tune SAM3 with 5 / 10 / 25 / 50 shots per class, then evaluate on the test split and convert the results to pixel-level metrics for comparison with U-Net baselines.
+
+## Expected Workspace Layout
+
+For training/evaluation, this project expects the course project repo and the external SAM3 repo to be siblings:
+
+```text
+<workspace>/
+  CSCI5527-final/
+    SAM3/
+  sam3/
+```
+
+The notebooks now infer paths from the current working directory instead of using hard-coded absolute paths. If your SAM3 repo is not located at `<workspace>/sam3`, set `SAM3_REPO_ROOT` before running the setup cell:
+
+```python
+import os
+os.environ["SAM3_REPO_ROOT"] = "/path/to/sam3"
+```
+
+## Directory Overview
 
 ```text
 CSCI5527-final/SAM3/
   README.md
-  sam3_ttd_fewshot_setup.ipynb
   sam3_ttd_zero_shot.ipynb
+  sam3_ttd_fewshot_setup.ipynb
+  sam3_ttd_fewshot_metric_conversion.ipynb
   smoke_test.py
   ttd_dataset.py
   ttd_metrics.py
   generated_configs/
-  finetune_data/
-  fewshot_data/
-  outputs/
+  fewshot_data/                 # ignored by git; generated/prepared data
+  finetune_data/                # ignored by git
+  outputs/                      # ignored by git; generated experiment outputs
+  reproducibility/
+  results/
 ```
 
-## 重要檔案
-
-`sam3_ttd_fewshot_setup.ipynb`
-
-目前最重要的 notebook。用來選實驗、跑 SAM3 few-shot fine-tuning、跑 test eval、最後做 IoU analysis。現在已經改成只需要改第一個 code cell 的 `EXPERIMENT_KEY`。
+## Main Files
 
 `sam3_ttd_zero_shot.ipynb`
 
-zero-shot baseline 用的 notebook。這條線不做 training，通常用來當 fine-tuning 前的 baseline。
+Runs the SAM3 zero-shot baseline using text prompts such as `crack`. This produces per-image and summary CSV files under `SAM3/outputs/zero_shot/`.
+
+`sam3_ttd_fewshot_setup.ipynb`
+
+Runs SAM3 few-shot fine-tuning and test evaluation. It supports both single-experiment execution and batch execution over all stable few-shot settings.
+
+`sam3_ttd_fewshot_metric_conversion.ipynb`
+
+Converts SAM3 COCO-style instance predictions into dense binary masks so that SAM3 can be compared with U-Net using the same pixel-level IoU, F1, precision, and recall definitions. It also merges SAM3 zero-shot, SAM3 few-shot, and U-Net baseline metrics into a final comparison table.
 
 `ttd_dataset.py`
 
-把原始 TTD CSV split 讀進來，找到 image 和 mask，並產生 sanitized mask。這比較像資料準備工具。
+Utility code for reading the original TTD CSV splits, locating image/mask files, and creating binary crack masks.
 
 `ttd_metrics.py`
 
-簡單的 binary segmentation metrics：IoU、precision、recall、F1。
+Simple binary segmentation metrics: IoU, precision, recall, and F1.
 
 `smoke_test.py`
 
-快速測試 `ttd_dataset.py` 能不能讀到 Single-TB 的資料。
+Quick check that the dataset utilities can read the Single-TB split.
 
-`generated_configs/`
+## Few-Shot Data
 
-早期產生或暫存的 config。目前 few-shot SAM3 training 主要不是看這裡，而是看 `/users/7/yu001011/csci5527/sam3/sam3/train/configs/ttd_fewshot/`。
-
-## fewshot_data 是什麼
-
-`fewshot_data/` 是已經整理成 SAM3 可以吃的 few-shot COCO 格式資料。
+`fewshot_data/` contains prepared COCO-style few-shot datasets for SAM3. This folder is generated data and is ignored by git.
 
 ```text
 fewshot_data/
@@ -62,7 +139,7 @@ fewshot_data/
   Shift-TA_TB-to-TC_10pct/
 ```
 
-每個實驗下面都有 4 種 shot 數：
+Each experiment has four shot settings:
 
 ```text
 5_shot_per_class/
@@ -71,7 +148,7 @@ fewshot_data/
 50_shot_per_class/
 ```
 
-每個 shot 資料夾裡面長這樣：
+Each shot folder follows this structure:
 
 ```text
 5_shot_per_class/
@@ -97,258 +174,236 @@ fewshot_data/
     test_manifest.jsonl
 ```
 
-重點：
+Important files:
 
-- `images/`: 圖片。
-- `masks/`: 對應的 crack mask。
-- `_annotations.coco.json`: SAM3 training / eval 會讀的 COCO annotation。
-- `manifest.csv/jsonl`: 比較方便人工檢查每張圖和 mask 的對應。
-- `run_local_commands.sh`: 這個資料夾對應的 train/eval 指令。
+- `images/`: input images.
+- `masks/`: binary crack masks.
+- `_annotations.coco.json`: COCO annotations used by SAM3 training/evaluation.
+- `manifest.csv/jsonl`: human-readable image/mask mapping.
+- `run_local_commands.sh`: generated train/eval commands for that shot setting.
 
-`fewshot_experiment_summary.csv` 是總表，記錄每個 experiment + shot 對應到哪個 dataset root、output dir、train YAML、test eval YAML。
+## Generated Outputs
 
-## outputs 是什麼
-
-`outputs/` 放實驗結果。
+`outputs/` stores generated experiment outputs and is ignored by git.
 
 ```text
 outputs/
   zero_shot/
   fewshot_runs/
+  fewshot_metric_conversion/
 ```
 
-few-shot training 的輸出會放在：
+A typical few-shot run output looks like:
 
 ```text
 outputs/fewshot_runs/<experiment_name>/<shot>_shot_per_class_<run_tag>/
+  checkpoints/
+    checkpoint.pt
+  dumps/
+    ttd/
+      val/coco_predictions_segm.json
+      test/coco_predictions_segm.json
+  logs/
+    log.txt
+    train_stats.json
+    val_stats.json
+    best_stats.json
+  tensorboard/
+  config.yaml
+  config_resolved.yaml
 ```
 
-例如：
-
-```text
-outputs/fewshot_runs/Shift-TA_TB-to-TC_10pct/5_shot_per_class_stable_lowlr_v1/
-```
-
-裡面通常會有：
-
-```text
-checkpoints/
-  checkpoint.pt
-dumps/
-  ttd/
-    val/coco_predictions_segm.json
-    test/coco_predictions_segm.json
-logs/
-  log.txt
-  train_stats.json
-  val_stats.json
-  best_stats.json
-tensorboard/
-config.yaml
-config_resolved.yaml
-```
-
-重點：
-
-- `checkpoints/checkpoint.pt`: training 後的 checkpoint。
-- `dumps/ttd/test/coco_predictions_segm.json`: test eval 的 segmentation prediction。
-- `logs/`: 訓練和驗證 log。
-- `tensorboard/`: TensorBoard event files。
-- `config_resolved.yaml`: 實際跑 training 時 resolve 完的設定。
-
-## YAML config 在哪
-
-SAM3 的 training YAML 不在這個 `CSCI5527-final/SAM3` 資料夾裡，而是在 SAM3 repo 裡：
-
-```text
-/users/7/yu001011/csci5527/sam3/sam3/train/configs/ttd_fewshot/
-```
-
-每個實驗現在都有兩種 run tag：
-
-- `stable_lowlr_v1`: 建議先用。學習率較低、epoch 較少，比較不容易出現 NaN loss 或壞 checkpoint。
-- `clean_fp32_v1`: 舊版/比較用設定。保留給對照，不建議當預設。
-
-例如 Single-TB 5-shot 建議用：
-
-```text
-configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1.yaml
-configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1_test_eval.yaml
-```
-
-在 notebook 裡，這些 config 是用相對於 SAM3 repo 的路徑傳給 trainer：
-
-```text
-python -m sam3.train.train -c configs/ttd_fewshot/...
-```
-
-一般不用重新寫 YAML。現在 Single-TB、Shift-TA_TC-to-TB_10pct、Shift-TA_TB-to-TC_10pct 的 5 / 10 / 25 / 50 shot 都有 `stable_lowlr_v1` train/eval YAML。
-
-## 怎麼跑 few-shot 實驗
-
-打開：
-
-```text
-sam3_ttd_fewshot_setup.ipynb
-```
-
-第一個 code cell 是 `Experiment Selection`。只改這個變數：
-
-```python
-EXPERIMENT_KEY = single_tb_5shot_stable_lowlr_v1
-```
-
-也可以用字串寫法：
-
-```python
-EXPERIMENT_KEY = "single_tb_5shot_stable_lowlr_v1"
-```
-
-然後依序執行：
-
-1. `Experiment Selection`
-2. `Train`
-3. `Test Eval`
-4. `IoU Analysis`
-
-`Experiment Selection` 會自動設定：
-
-- `TRAIN_CONFIG`
-- `TEST_CONFIG`
-- `RUN_ROOT`
-- `RUN_DIR`
-- `CHECKPOINT`
-- `GT_JSON`
-- `PRED_JSON`
-
-後面的 cell 都會共用這些變數。
-
-## 常用 EXPERIMENT_KEY
-
-Single-TB stable：
-
-```python
-EXPERIMENT_KEY = single_tb_5shot_stable_lowlr_v1
-EXPERIMENT_KEY = single_tb_10shot_stable_lowlr_v1
-EXPERIMENT_KEY = single_tb_25shot_stable_lowlr_v1
-EXPERIMENT_KEY = single_tb_50shot_stable_lowlr_v1
-```
-
-TA + TC train, TB test stable：
-
-```python
-EXPERIMENT_KEY = shift_ta_tc_to_tb_10pct_5shot_stable_lowlr_v1
-EXPERIMENT_KEY = shift_ta_tc_to_tb_10pct_10shot_stable_lowlr_v1
-EXPERIMENT_KEY = shift_ta_tc_to_tb_10pct_25shot_stable_lowlr_v1
-EXPERIMENT_KEY = shift_ta_tc_to_tb_10pct_50shot_stable_lowlr_v1
-```
-
-TA + TB train, TC test stable：
-
-```python
-EXPERIMENT_KEY = shift_ta_tb_to_tc_10pct_5shot_stable_lowlr_v1
-EXPERIMENT_KEY = shift_ta_tb_to_tc_10pct_10shot_stable_lowlr_v1
-EXPERIMENT_KEY = shift_ta_tb_to_tc_10pct_25shot_stable_lowlr_v1
-EXPERIMENT_KEY = shift_ta_tb_to_tc_10pct_50shot_stable_lowlr_v1
-```
-
-舊版 clean 設定也還在，例如：
-
-```python
-EXPERIMENT_KEY = single_tb_5shot_clean_fp32_v1
-```
-
-但如果你只是要順利跑實驗，先用 `stable_lowlr_v1`。
-
-## Single-TB 要怎麼跑
-
-如果你現在要跑 Single-TB 5-shot，在 notebook 第一個 cell 用：
-
-```python
-EXPERIMENT_KEY = single_tb_5shot_stable_lowlr_v1
-```
-
-Notebook 會自動選到：
-
-```text
-configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1.yaml
-configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1_test_eval.yaml
-```
-
-輸出會放到：
-
-```text
-outputs/fewshot_runs/Single-TB/5_shot_per_class_stable_lowlr_v1/
-```
-
-## 如果只想用 shell 跑
-
-每個 few-shot dataset folder 裡都有 `run_local_commands.sh`，例如：
-
-```text
-fewshot_data/Single-TB/5_shot_per_class/run_local_commands.sh
-```
-
-裡面通常有兩行：
-
-```bash
-python -m sam3.train.train -c configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1.yaml --use-cluster 0 --num-gpus 1
-python -m sam3.train.train -c configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1_test_eval.yaml --use-cluster 0 --num-gpus 1
-```
-
-有些 `run_local_commands.sh` 可能還是舊的 `clean_fp32_v1` 指令；建議以 notebook 顯示的 `TRAIN_CONFIG` / `TEST_CONFIG` 為準。
-
-要注意這些指令要在 SAM3 repo root 跑：
-
-```bash
-cd /users/7/yu001011/csci5527/sam3
-```
-
-Notebook 已經幫你處理 `cwd`，所以比較不容易跑錯位置。
-
-## 快速檢查資料讀取
-
-可以跑：
-
-```bash
-cd /users/7/yu001011/csci5527/CSCI5527-final/SAM3
-python3 smoke_test.py
-```
-
-它會測試 `ttd_dataset.py` 能不能讀到 Single-TB 的資料，並印出 sample image 和 mask path。
-
-## 常見問題
-
-### 我要跑 Single-TB，要重寫 YAML 嗎？
-
-不用。直接改 notebook 裡的 `EXPERIMENT_KEY`，建議先選 `stable_lowlr_v1`。
-
-### Train cell 說找不到 checkpoint 怎麼辦？
-
-`Test Eval` 需要先有：
-
-```text
-RUN_DIR/checkpoints/checkpoint.pt
-```
-
-先跑 `Train` cell，或確認你選的 `EXPERIMENT_KEY` 對應的 `RUN_DIR` 裡已經有 checkpoint。
-
-### IoU Analysis 找不到 prediction file 怎麼辦？
-
-代表 test eval 還沒產生：
+The most important generated prediction file is:
 
 ```text
 dumps/ttd/test/coco_predictions_segm.json
 ```
 
-先跑 `Test Eval` cell。
+## SAM3 YAML Configs
 
-### 要改 learning rate 或 epoch 怎麼辦？
-
-這種情況才需要改 YAML。YAML 在：
+SAM3 training configs are consumed from the external SAM3 repo:
 
 ```text
-/users/7/yu001011/csci5527/sam3/sam3/train/configs/ttd_fewshot/
+<workspace>/sam3/sam3/train/configs/ttd_fewshot/
 ```
 
-建議複製一份新的 YAML，改新的 `run_tag` 和 output dir，不要直接覆蓋已經跑過的 config，這樣結果比較好追蹤。
+For reproducibility, this project stores a copy of the project-specific configs under:
+
+```text
+SAM3/reproducibility/sam3_configs/ttd_fewshot/
+```
+
+Current run tags:
+
+- `stable_lowlr_v1`: recommended setting. It uses a lower learning rate and fewer epochs to reduce NaN loss / bad checkpoint issues.
+- `clean_fp32_v1`: earlier comparison setting, kept for reference.
+
+Example Single-TB 5-shot configs:
+
+```text
+configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1.yaml
+configs/ttd_fewshot/ttd_single_tb_5shot_textseg_stable_lowlr_v1_test_eval.yaml
+```
+
+The notebooks pass these paths relative to the SAM3 repo root:
+
+```bash
+python -m sam3.train.train -c configs/ttd_fewshot/...
+```
+
+## Running Few-Shot Experiments
+
+Open:
+
+```text
+SAM3/sam3_ttd_fewshot_setup.ipynb
+```
+
+Run the first cell, **Experiment Selection**, before any train/eval cells.
+
+### Single Experiment Mode
+
+Set `EXPERIMENT_KEY` in the first code cell, for example:
+
+```python
+EXPERIMENT_KEY = single_tb_5shot_stable_lowlr_v1
+```
+
+or:
+
+```python
+EXPERIMENT_KEY = "single_tb_5shot_stable_lowlr_v1"
+```
+
+Then run the helper cell and call:
+
+```python
+run_train(EXPERIMENT_KEY)
+run_eval(EXPERIMENT_KEY)
+```
+
+### Batch Mode
+
+The notebook also defines `BATCH_EXPERIMENT_KEYS`, which runs all stable settings in this order:
+
+1. `Single-TB`: 5 / 10 / 25 / 50-shot
+2. `Shift-TA_TC-to-TB_10pct`: 5 / 10 / 25 / 50-shot
+3. `Shift-TA_TB-to-TC_10pct`: 5 / 10 / 25 / 50-shot
+
+The order intentionally runs all Single-TB YAMLs first, because that ordering avoided the earlier dtype/gradient issues observed during setup.
+
+Run the **Batch Train + Eval** cell to process all stable experiments. Existing checkpoints/prediction JSON files are skipped by default.
+
+## Common Experiment Keys
+
+Single-TB:
+
+```python
+single_tb_5shot_stable_lowlr_v1
+single_tb_10shot_stable_lowlr_v1
+single_tb_25shot_stable_lowlr_v1
+single_tb_50shot_stable_lowlr_v1
+```
+
+TA + TC train, TB test:
+
+```python
+shift_ta_tc_to_tb_10pct_5shot_stable_lowlr_v1
+shift_ta_tc_to_tb_10pct_10shot_stable_lowlr_v1
+shift_ta_tc_to_tb_10pct_25shot_stable_lowlr_v1
+shift_ta_tc_to_tb_10pct_50shot_stable_lowlr_v1
+```
+
+TA + TB train, TC test:
+
+```python
+shift_ta_tb_to_tc_10pct_5shot_stable_lowlr_v1
+shift_ta_tb_to_tc_10pct_10shot_stable_lowlr_v1
+shift_ta_tb_to_tc_10pct_25shot_stable_lowlr_v1
+shift_ta_tb_to_tc_10pct_50shot_stable_lowlr_v1
+```
+
+## Metric Conversion and U-Net Comparison
+
+SAM3 outputs COCO-style instance predictions, while U-Net outputs one dense binary mask per image. To compare them fairly, `sam3_ttd_fewshot_metric_conversion.ipynb` converts SAM3 predictions into dense masks by unioning all predicted instance masks above a score threshold:
+
+```text
+SAM3 instance masks -> union mask -> pixel-level IoU/F1/precision/recall
+```
+
+The conversion notebook produces:
+
+```text
+SAM3/outputs/fewshot_metric_conversion/
+  sam3_fewshot_pixel_metric_summary_threshold_sweep.csv
+  sam3_fewshot_pixel_metric_per_image_threshold_sweep.csv
+  unet_resnet34_imagenet_positive_negative_test_metrics.csv
+  sam3_vs_unet_pixel_metric_comparison.csv
+```
+
+The final report-ready comparison table is copied to a tracked folder:
+
+```text
+SAM3/results/sam3_vs_unet_pixel_metric_comparison.csv
+```
+
+For a strict final comparison, use a fixed threshold or validation-selected threshold. Test-set threshold selection should be treated as exploratory / upper-bound analysis.
+
+## Quick Dataset Check
+
+From the project repo:
+
+```bash
+cd <workspace>/CSCI5527-final/SAM3
+python3 smoke_test.py
+```
+
+This checks that `ttd_dataset.py` can read the Single-TB data and locate sample image/mask paths.
+
+## Reproducibility Bundle
+
+The external SAM3 repo was lightly modified for this project. Instead of committing the full SAM3 repo into the course project, this repo stores:
+
+```text
+SAM3/reproducibility/
+  sam3_patches/
+    sam3_ttd_changes.patch
+  sam3_configs/
+    ttd_fewshot/*.yaml
+```
+
+To reproduce the SAM3 setup from a fresh SAM3 checkout, place the two repos as siblings:
+
+```text
+<workspace>/
+  CSCI5527-final/
+  sam3/
+```
+
+Then apply the patch and copy the configs:
+
+```bash
+cd <workspace>/sam3
+git apply ../CSCI5527-final/SAM3/reproducibility/sam3_patches/sam3_ttd_changes.patch
+mkdir -p sam3/train/configs/ttd_fewshot
+cp ../CSCI5527-final/SAM3/reproducibility/sam3_configs/ttd_fewshot/*.yaml \
+   sam3/train/configs/ttd_fewshot/
+```
+
+After that, run:
+
+```text
+SAM3/sam3_ttd_fewshot_setup.ipynb
+SAM3/sam3_ttd_fewshot_metric_conversion.ipynb
+```
+
+Large generated files such as checkpoints, prediction JSON files, TensorBoard logs, and per-image sweep CSVs remain under `SAM3/outputs/` and are intentionally ignored by git.
+
+## Notes on Git Tracking
+
+The repo tracks the notebooks, reproducibility patch/configs, README, and final report-ready result table. It does not track:
+
+- model checkpoints (`*.pt`, `*.pth`)
+- generated SAM3 outputs under `SAM3/outputs/`
+- prepared data folders (`fewshot_data/`, `finetune_data/`, `TACK_Tunnel_Data/`)
+- large per-image diagnostic CSVs

@@ -112,3 +112,7 @@ sam3/
 *.tmp
 *.temp
 *.bak
+
+# Keep final report-ready result tables tracked while ignoring generated bulk outputs.
+!SAM3/results/
+!SAM3/results/*.csv
