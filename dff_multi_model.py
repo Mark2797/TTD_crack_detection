@@ -132,7 +132,7 @@ def plot_nmf_elbow(model, dataloader, target_layer, device, k_range=range(2, 16)
 def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model, target_layers, device, save_dir="figures/dff_analysis", custom_stats_list=None, n_components=6):
     """
     Independently scans a list of dataloaders for each model to find its own first TP, FP, FN, TN situations.
-    Generates a 4-row layout:
+    Generates a tight 4-row layout:
       - Row 1: Channel 0, Channel 1, Channel 2
       - Row 2: GT Mask, Prediction, Overlap
       - Row 3 & 4: DFF Concepts overlaid EXCLUSIVELY on Channel 0
@@ -152,7 +152,7 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
     
     # Calculate GridSpec width to center 3 top columns with the dynamic DFF rows below
     gs_width = 3 * r1_cols * r2_cols
-    w_top = gs_width // 3      # Width for elements in the top two 3-column rows
+    w_top = gs_width // 3      
     w1 = gs_width // r1_cols   
     w2 = gs_width // r2_cols   
     
@@ -231,9 +231,9 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
             overlap[(pred_np == 0) & (mask_np == 1)] = [1, 0, 0] 
             overlap[(pred_np == 1) & (mask_np == 0)] = [1, 1, 0] 
             
-            # Increased height slightly to comfortably fit the 4th row
-            fig = plt.figure(figsize=(18, 18))
-            gs = fig.add_gridspec(4, gs_width) 
+            # A 3x4 grid of square images maps nicely to a 15x20 figure to prevent white boxes
+            fig = plt.figure(figsize=(15, 20))
+            gs = fig.add_gridspec(4, gs_width, wspace=0.02, hspace=0.10) 
             
             # --- Row 1: The 3 Channels ---
             ax_ch0 = fig.add_subplot(gs[0, 0*w_top : 1*w_top])
@@ -296,10 +296,17 @@ def run_dff_for_multiple_models(models, model_names, dataloaders_list_per_model,
                 mpatches.Patch(color='red', label='Missed (FN)'),
                 mpatches.Patch(color='yellow', label='False Alarm (FP)')
             ]
-            fig.legend(handles=patches, loc='lower center', ncol=3, bbox_to_anchor=(0.5, 0.05), fontsize=14)
+            fig.legend(handles=patches, loc='lower center', ncol=3, bbox_to_anchor=(0.5, 0.02), fontsize=14)
 
-            plt.tight_layout()
-            plt.subplots_adjust(bottom=0.08) 
+            # Manual tight adjustments to stretch images and shrink white space
+            plt.subplots_adjust(
+                top=0.95,      
+                bottom=0.06,   
+                left=0.02,     
+                right=0.98,    
+                wspace=0.02,   # Shrink column gap to bare minimum
+                hspace=0.10    # Shrink row gap to just fit titles
+            )
             
             save_path = os.path.join(save_dir, f"{model_name}_DFF_Analysis_{sit_name}.png")
             plt.savefig(save_path, bbox_inches='tight')
