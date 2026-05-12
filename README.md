@@ -16,6 +16,15 @@ models_with_sobelxy
 models_with_sobelxymaglap
 * the model training and testing pipeline wiht ImageNet weight, but the 3 channels are original image, sobel magnitude, Laplacian of Guassian
 
+analysis
+* codebase for the analysis of the results, including the code for generating the tables and figures in the paper. Basically, it is for the post-processing part.
+
+baseline_models_scripts
+* the scripts for training and testing the baseline models, but it is used in py file
+
+SAM3
+* it is for SAM3 part in our results. We midified some in the original SAM3 code to fit our data and pipeline, but the main structure is the same as the original one. The modiffication detail is in the SAM3/README.md.
+
 dataset_download.py
 * code for downloading the TACK Tunnel Data (TTD) dataset from Huggingface
 
